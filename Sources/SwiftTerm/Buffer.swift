@@ -23,6 +23,12 @@ public final class Buffer {
     var compactsHistory = true
     /// The lines of the scrollback that were unpacked last (see `BufferHistory.swift`).
     var unpackedLines = UnpackedLineRing()
+    /// The cells of the line packed last, for the next line that needs cells (see `BufferHistory.swift`).
+    var spareCells: UnsafeMutableBufferPointer<CharData>? = nil
+
+    deinit {
+        spareCells?.deallocate()
+    }
     var xDisp, _yDisp, xBase: Int
     private var _x, _y, _yBase: Int
     private var _linesWithImagesCount: Int = 0

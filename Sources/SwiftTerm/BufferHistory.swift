@@ -16,7 +16,7 @@ import Foundation
 struct UnpackedLineRing {
     private struct Entry {
         let line: BufferLine
-        let ticket: UInt32
+        let ticket: UInt64
         let generation: UInt64
 
         /// False for a line that was unpacked again since (it has a newer entry) and for a line
@@ -26,7 +26,7 @@ struct UnpackedLineRing {
 
     private var entries: [Entry?] = []
     private var next = 0
-    private var tickets: UInt32 = 0
+    private var tickets: UInt64 = 0
 
     var capacity: Int { entries.count }
 
@@ -51,6 +51,21 @@ struct UnpackedLineRing {
 }
 
 extension Buffer {
+    /// Keeps the cells of a line that was just packed. A scroll at the history's cap packs the
+    /// line that left the screen and recycles the oldest one into a new line of the screen, one
+    /// allocation each; this hands the first's cells to the second.
+    func keepSpareCells(_ cells: UnsafeMutableBufferPointer<CharData>) {
+        spareCells?.deallocate()
+        spareCells = cells
+    }
+
+    /// The spare cells, if there are some with room for `minimumCount` of them.
+    func takeSpareCells(minimumCount: Int) -> UnsafeMutableBufferPointer<CharData>? {
+        guard let spare = spareCells, spare.count >= minimumCount else { return nil }
+        spareCells = nil
+        return spare
+    }
+
     /// How many lines the buffer keeps unpacked after they were read: a few screens, so that
     /// drawing and scrolling the view never packs a line the next frame needs.
     private var unpackedLineCapacity: Int { max(512, rows * 4) }

@@ -30,7 +30,7 @@ on iOS to run) and includes a login UI to configure the connection.
 
 *This section is specific to the Soyeht fork.*
 
-A `BufferLine` keeps one `CharData` per column, which is 26 bytes a cell. A terminal with 10,000
+A `BufferLine` keeps one `CharData` per column, which is 24 bytes a cell (`MemoryLayout<CharData>.stride`). A terminal with 10,000
 lines of scrollback at 80 columns therefore holds about 20 MB for its history, and about 52 MB at 200
 columns, although nearly all of it is ASCII text, a few attributes and blanks.
 
@@ -52,12 +52,27 @@ What changed, and nothing else:
   every method of the class, and every reader of the buffer (rendering, selection, search, reflow,
   accessibility, `getLine`), behaves as before. `pack()`, `collectPayloadCodes(into:)` and a pin
   for the two-line copies were added.
-* `Buffer.swift`: two stored properties (`compactsHistory`, `unpackedLines`) and `packHistory()`
-  after `resize` and `changeHistorySize`.
+* `Buffer.swift`: three stored properties (`compactsHistory`, `unpackedLines`, `spareCells`, the cells
+  of the line packed last, which the next line that needs cells takes) and `packHistory()` after
+  `resize` and `changeHistorySize`.
 * `Terminal.swift`: `scroll` packs the line that left the screen, and `garbageCollectPayload`
   reads the atoms of packed lines without unpacking them.
 * `CharData.swift`: two members made internal (`TinyAtom.init(code:)`, `rawSemanticContentCode`).
-* `Tests/SwiftTermTests/CompactScrollbackTests.swift` (new).
+* `Tests/SwiftTermTests/CompactScrollbackTests.swift` and `CompactScrollbackFuzzTests.swift` (new):
+  the second feeds random output, including margins, resizes and the alternate screen, to a
+  terminal that packs and one that does not and compares them; `FUZZ_SEEDS=a-b` runs other seeds.
+
+A fix of upstream that the fuzz test found (it crashed with packing off as well):
+
+* `Terminal.swift`, `BufferLine.swift`: Insert Line and Delete Line with left and right margins
+  moved as many rows as the scrolling region has, counted from the cursor row and not from the bottom
+  margin, so they read and wrote rows past the bottom margin, and, after the rows had been reduced
+  by a resize, lines left in the buffer's array that no longer belong to it and have the old width. The
+  copy of `marginRight - marginLeft + 1` cells from a shorter line is an out of range index (an
+  unchecked heap read and write in a release build). The rows are now counted from the cursor to the
+  bottom margin, Delete Line does nothing with the cursor outside the region (as in the case
+  without margins), and `copyFrom (_:srcCol:dstCol:len:)` and `fill (with:atCol:len:)` cut a range
+  that does not fit the line. `MarginLineScrollTests.swift` covers it.
 
 How it behaves: a line is packed when it scrolls off the top, and unpacked, as a whole, by the first
 read or write of one of its cells. The buffer remembers the last `max (512, 4 * rows)` lines it

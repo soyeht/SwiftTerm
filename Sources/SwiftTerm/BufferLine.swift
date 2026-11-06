@@ -67,7 +67,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     private var packWaits = false
 
     /// Which of the buffer's unpackings of this line is the latest (see `UnpackedLineRing`).
-    var unpackTicket: UInt32 = 0
+    var unpackTicket: UInt64 = 0
 
     /// The cells of the line, unpacked if they were packed.
     private var data: UnsafeMutableBufferPointer<CharData> {
@@ -141,9 +141,20 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         guard packed == nil, dataSize > 0, let base = cells.baseAddress else { return }
         packed = PackedCells.pack(UnsafeBufferPointer(start: base, count: dataSize))
-        cells.deinitialize()
-        cells.deallocate()
+        if let owner = owningBuffer {
+            // The next line to need cells (a recycled line, an unpacked one) takes them.
+            owner.keepSpareCells(cells)
+        } else {
+            cells.deinitialize()
+            cells.deallocate()
+        }
         cells = UnsafeMutableBufferPointer(start: nil, count: 0)
+    }
+
+    /// Cells for a line of `dataSize` cells: the buffer's spare ones, if it has them.
+    private func allocateCells() -> UnsafeMutableBufferPointer<CharData> {
+        owningBuffer?.takeSpareCells(minimumCount: dataSize)
+            ?? UnsafeMutableBufferPointer<CharData>.allocate(capacity: dataSize)
     }
 
     var isPacked: Bool { packed != nil }
@@ -166,7 +177,7 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     private func unpack() {
         guard let blob = packed else { return }
-        let buf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: dataSize)
+        let buf = allocateCells()
         if let base = buf.baseAddress {
             PackedCells.unpack(blob, count: dataSize, into: base)
         }
@@ -236,7 +247,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             // Nothing of the old cells is read, so there is nothing to unpack.
             blob.deallocate()
             packed = nil
-            cells = UnsafeMutableBufferPointer<CharData>.allocate(capacity: dataSize)
+            cells = allocateCells()
             cells.initialize(repeating: empty)
         } else {
             cells.update(repeating: empty)
@@ -436,6 +447,10 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - len: number of columns to fill
     public func fill (with: CharData, atCol: Int, len: Int)
     {
+        // Cut to the line, as in `copyFrom`.
+        guard atCol >= 0 else { return }
+        let len = min (len, dataSize - atCol)
+        guard len > 0 else { return }
         for i in 0..<len {
             data [i+atCol] = with
         }
@@ -494,6 +509,11 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - len: the number of elements to copy
     public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
     {
+        // The unsafe buffer subscript is not checked in a release build: a range outside either
+        // line (a margin wider than a line that was not resized with the others) is cut to fit.
+        guard srcCol >= 0, dstCol >= 0 else { return }
+        let len = min (len, src.dataSize - srcCol, dataSize - dstCol)
+        guard len > 0 else { return }
         let movesSemanticHardContinuation = srcCol == 0 && dstCol == 0 && len >= count
         let movedSemanticHardContinuationGroup = src.semanticHardContinuationGroup
         let source = src.pinnedCells()
