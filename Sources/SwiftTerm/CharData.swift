@@ -195,7 +195,8 @@ public struct TinyAtom {
     private static var lastUsed: UInt16 = 0
     static let empty = TinyAtom (code: 0)
    
-    private init(code: UInt16)
+    // Internal so that `PackedCells` can rebuild the atom of a cell it stored.
+    init(code: UInt16)
     {
         self.code = code
     }
@@ -378,6 +379,12 @@ public struct CharData: CustomDebugStringConvertible {
 
     mutating func setSemanticContent(_ content: SemanticContent) {
         semanticContentCode = SemanticContentCode(content).rawValue
+    }
+
+    /// The stored form of `semanticContent`, which `PackedCells` keeps as it is.
+    var rawSemanticContentCode: UInt8 {
+        get { semanticContentCode }
+        set { semanticContentCode = newValue }
     }
     
     public func getPayload () -> Any?

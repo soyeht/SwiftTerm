@@ -6317,14 +6317,7 @@ open class Terminal {
         for buffer in [normalBuffer, altBuffer] {
             // TODO use a better system than this ugly nest
             for line in buffer.lines.getArray() {
-                if let array = line?.getData() {
-                    for data in array {
-                        let code = data.payload.code
-                        if code > 0 {
-                            used.insert(code)
-                        }
-                    }
-                }
+                line?.collectPayloadCodes(into: &used)
             }
         }
         
@@ -6599,6 +6592,7 @@ open class Terminal {
                     buffer.yDisp = max (buffer.yDisp - 1, 0)
                 }
             }
+            buffer.packLineThatLeftTheScreen ()
         } else {
             // scrollTop is non-zero which means no line will be going to the
             // scrollback, instead we can just shift them in-place.
