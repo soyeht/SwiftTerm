@@ -2,6 +2,10 @@
 SwiftTerm
 =========
 
+> **This is the Soyeht fork.** It is upstream SwiftTerm v1.20.0 with one change, a compact
+> scrollback, and it is kept so that it rebases onto upstream (see "Compact scrollback" below).
+> The upstream project is [migueldeicaza/SwiftTerm](https://github.com/migueldeicaza/SwiftTerm).
+
 SwiftTerm is a VT100/Xterm terminal emulator library for Swift applications that can be 
 embedded into macOS, iOS applications, text-based, headless applications or other 
 custom scenarios. It has been used in several commercially available SSH clients, including 
@@ -21,6 +25,66 @@ use the library inside the `TerminalApp` directory.
 * The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.   
 * The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell
 on iOS to run) and includes a login UI to configure the connection. 
+
+## Compact scrollback
+
+*This section is specific to the Soyeht fork.*
+
+A `BufferLine` keeps one `CharData` per column, which is 24 bytes a cell (`MemoryLayout<CharData>.stride`). A terminal with 10,000
+lines of scrollback at 80 columns therefore holds about 20 MB for its history, and about 52 MB at 200
+columns, although nearly all of it is ASCII text, a few attributes and blanks.
+
+In the fork, a line that leaves the screen is stored as `PackedCells` (`PackedLine.swift`): the
+characters run-length coded in one byte each for ASCII, and the attributes, payload atoms (hyperlinks)
+and OSC 133 roles as runs. Only the lines of the live screen are full cells. Measured on a terminal
+fed 13,000 full-width lines with 10,000 of scrollback (a release build, malloc bytes in use), the
+terminal takes 2.4 MB at 80 columns (from 21.0 MB) and 3.7 MB at 200 columns (from 50.4 MB). The worst
+case, a colour change in every cell, takes 5.1 and 10.1 MB; feeding the output costs about 1.5
+microseconds more a line.
+
+What changed, and nothing else:
+
+* `PackedLine.swift` (new): the encoding. It stores every field of `CharData` and `Attribute`;
+  a test fails if one is added upstream without being added here.
+* `BufferHistory.swift` (new): the ring of recently unpacked lines, and `Buffer` methods that pack.
+* `BufferLine.swift`: it no longer keeps `fillCharacter`, which only its initializer read, so
+  that a line object is 128 bytes and not 160. The cells are behind `data`, which unpacks the line on first access, so
+  every method of the class, and every reader of the buffer (rendering, selection, search, reflow,
+  accessibility, `getLine`), behaves as before. `pack()`, `collectPayloadCodes(into:)` and a pin
+  for the two-line copies were added.
+* `Buffer.swift`: three stored properties (`compactsHistory`, `unpackedLines`, `spareCells`, the cells
+  of the line packed last, which the next line that needs cells takes) and `packHistory()` after
+  `resize` and `changeHistorySize`.
+* `Terminal.swift`: `scroll` packs the line that left the screen, and `garbageCollectPayload`
+  reads the atoms of packed lines without unpacking them.
+* `CharData.swift`: two members made internal (`TinyAtom.init(code:)`, `rawSemanticContentCode`).
+* `Tests/SwiftTermTests/CompactScrollbackTests.swift` and `CompactScrollbackFuzzTests.swift` (new):
+  the second feeds random output, including margins, resizes and the alternate screen, to a
+  terminal that packs and one that does not and compares them; `FUZZ_SEEDS=a-b` runs other seeds.
+
+A fix of upstream that the fuzz test found (it crashed with packing off as well):
+
+* `Terminal.swift`, `BufferLine.swift`: Insert Line and Delete Line with left and right margins
+  moved as many rows as the scrolling region has, counted from the cursor row and not from the bottom
+  margin, so they read and wrote rows past the bottom margin, and, after the rows had been reduced
+  by a resize, lines left in the buffer's array that no longer belong to it and have the old width. The
+  copy of `marginRight - marginLeft + 1` cells from a shorter line is an out of range index (an
+  unchecked heap read and write in a release build). The rows are now counted from the cursor to the
+  bottom margin, Delete Line does nothing with the cursor outside the region (as in the case
+  without margins), and `copyFrom (_:srcCol:dstCol:len:)` and `fill (with:atCol:len:)` cut a range
+  that does not fit the line. `MarginLineScrollTests.swift` covers it.
+
+How it behaves: a line is packed when it scrolls off the top, and unpacked, as a whole, by the first
+read or write of one of its cells. The buffer remembers the last `max (512, 4 * rows)` lines it
+unpacked and packs the oldest again, so reading a long history one line after another (a search,
+a select all) never holds more than that many lines of full cells. `Buffer.compactsHistory = false`
+turns the packing off, which is how the tests compare the two. As in upstream, a terminal is not
+safe to read from one thread while another feeds it; reading now also changes the line it reads.
+
+Following upstream: the branch `compact-scrollback` is an upstream release plus this change, and
+each release of the fork is a tag `v<upstream version>-soyeht.<n>` on it. To follow upstream, fetch
+it, rebase the `compact-scrollback` commits onto the new release, run `swift test` (the five Metal
+renderer tests need the shader file and fail in a headless run, with or without the change) and tag.
 
 ## Companion Apps
 

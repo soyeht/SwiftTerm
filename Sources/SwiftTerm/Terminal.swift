@@ -3384,7 +3384,9 @@ open class Terminal {
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                // From the cursor row to the bottom margin, not from the top margin: the rows
+                // below the scrolling region are not lines of it.
+                let rowCount = buffer.scrollBottom-buffer.y
                 for _ in 0..<p {
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
@@ -6025,9 +6027,12 @@ open class Terminal {
         let ea = eraseAttr ()
         
         if marginMode {
-            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+                && buffer.y >= buffer.scrollTop && buffer.y <= buffer.scrollBottom
+            {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                // From the cursor row to the bottom margin (see cmdInsertLines).
+                let rowCount = buffer.scrollBottom-buffer.y
                 for _ in 0..<p {
                     for i in 0..<(rowCount) {
                         let src = buffer.lines [row+i+1]
@@ -6317,14 +6322,7 @@ open class Terminal {
         for buffer in [normalBuffer, altBuffer] {
             // TODO use a better system than this ugly nest
             for line in buffer.lines.getArray() {
-                if let array = line?.getData() {
-                    for data in array {
-                        let code = data.payload.code
-                        if code > 0 {
-                            used.insert(code)
-                        }
-                    }
-                }
+                line?.collectPayloadCodes(into: &used)
             }
         }
         
@@ -6599,6 +6597,7 @@ open class Terminal {
                     buffer.yDisp = max (buffer.yDisp - 1, 0)
                 }
             }
+            buffer.packLineThatLeftTheScreen ()
         } else {
             // scrollTop is non-zero which means no line will be going to the
             // scrollback, instead we can just shift them in-place.

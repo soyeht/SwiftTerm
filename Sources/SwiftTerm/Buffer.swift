@@ -18,6 +18,17 @@ import Foundation
  */
 public final class Buffer {
     private var _lines: CircularBufferLineList
+
+    /// When false the lines of the scrollback keep full cells, which tests use to compare.
+    var compactsHistory = true
+    /// The lines of the scrollback that were unpacked last (see `BufferHistory.swift`).
+    var unpackedLines = UnpackedLineRing()
+    /// The cells of the line packed last, for the next line that needs cells (see `BufferHistory.swift`).
+    var spareCells: UnsafeMutableBufferPointer<CharData>? = nil
+
+    deinit {
+        spareCells?.deallocate()
+    }
     var xDisp, _yDisp, xBase: Int
     private var _x, _y, _yBase: Int
     private var _linesWithImagesCount: Int = 0
@@ -899,6 +910,7 @@ public final class Buffer {
         }
         rows = newRows
         cols = newCols
+        packHistory()
     }
     
     /// Removes the scrollback history (the lines above the visible screen)
@@ -939,6 +951,7 @@ public final class Buffer {
                 lines.maxLength = newMaxLength
             }
         }
+        packHistory()
     }
 
     /// R7: the structural invariants of the stored-marks model. Behavioral
